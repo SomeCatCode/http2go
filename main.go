@@ -16,40 +16,79 @@ type Config struct {
 // TODO: Ich muss den Code echt mal aufräumen und mehr Debugging einbauen
 
 func main() {
-	config := loadConfig()
+	// Lade die Konfiguration aus der JSON-Datei.
+	config, err := getConfig()
+	if err != nil {
+		log.Fatalf("Fehler beim Laden der Konfiguration: %v", err)
+		return
+	}
 
 	fs := http.FileServer(http.Dir(config.RootPath))
 	http.Handle("/", http.StripPrefix("/", fs))
 
 	log.Printf("Listening on :%s...\n", config.Port)
-	err := http.ListenAndServe(":"+config.Port, nil)
+	err = http.ListenAndServe(":"+config.Port, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func loadConfig() Config {
-	configFilePath := "config.json"
-	defaultRootPath, _ := os.Getwd()
-
-	if _, err := os.Stat(configFilePath); os.IsNotExist(err) {
-		config := Config{RootPath: defaultRootPath, Port: "8080"}
-		configJson, _ := json.Marshal(config)
-		_ = os.WriteFile(configFilePath, configJson, 0644)
-		return config
-	} else {
-		configJson, _ := os.ReadFile(configFilePath)
-		var config Config
-		_ = json.Unmarshal(configJson, &config)
-
-		if !filepath.IsAbs(config.RootPath) {
-			config.RootPath = filepath.Join(defaultRootPath, config.RootPath)
-		}
-
-		if config.Port == "" {
-			config.Port = "8080"
-		}
-
-		return config
+func getConfig() (*Config, error) {
+	// Ermittle den Pfad der ausführbaren Datei und das Verzeichnis, in dem sie sich befindet.
+	exPath, err := os.Executable()
+	if err != nil {
+		log.Fatalf("Fehler beim Ermitteln des Executable-Pfads: %v", err)
 	}
+	exDir := filepath.Dir(exPath)
+
+	configFile := filepath.Join(exDir, "http2go_config.json")
+
+	// Überprüfe, ob Config-Datei existiert
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		// Erstelle Config-Datei mit Standardwerten
+		defaultConfig := Config{
+			RootPath: filepath.Dir(exPath), // Setze den Root-Pfad auf das Verzeichnis der ausführbaren Datei.
+			Port:     "8080",
+		}
+
+		data, err := json.MarshalIndent(defaultConfig, "", "  ")
+		if err != nil {
+			log.Fatalf("Fehler beim Erzeugen der Standard-Config: %v", err)
+			return nil, err
+		}
+
+		// Schreibe die Standard-Konfiguration in die Datei.
+		err = os.WriteFile(configFile, data, 0644)
+		if err != nil {
+			log.Fatalf("Fehler beim Schreiben der Standard-Config: %v", err)
+			return nil, err
+		}
+	}
+
+	// Lese Config-Datei
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		log.Fatalf("Fehler beim Lesen der Config-Datei: %v", err)
+		return nil, err
+	}
+
+	// Parse die Konfigurationsdaten in die Config-Struktur.
+	var config Config
+	err = json.Unmarshal(data, &config)
+	if err != nil {
+		log.Fatalf("Fehler beim Parsen der Config-Datei: %v", err)
+		return nil, err
+	}
+
+	// Überprüfe, ob der angegebene Root-Pfad existiert und ein Verzeichnis ist.
+	rootInfo, err := os.Stat(config.RootPath)
+	if os.IsNotExist(err) {
+		log.Fatalf("Der angegebene Root-Pfad existiert nicht: %v", config.RootPath)
+		return nil, err
+	} else if !rootInfo.IsDir() {
+		log.Fatalf("Der angegebene Root-Pfad ist kein Verzeichnis: %v", config.RootPath)
+		return nil, err
+	}
+
+	return &config, nil
 }
